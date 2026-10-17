@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# eng env — mostra as variáveis de ambiente do ENG. REVERSA
+set -uo pipefail
+
+ENG_REV_HOME="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+# shellcheck source=/dev/null
+source "$ENG_REV_HOME/config/env.sh"
+
+case "${1:-}" in
+  --shell|--export)
+    echo "export ENG_REVERSA=\"$ENG_REV_HOME\""
+    echo "export GHIDRA_INSTALL_DIR=\"${GHIDRA_INSTALL_DIR:-}\""
+    echo "export JAVA_HOME=\"${JAVA_HOME:-}\""
+    echo "export PATH=\"$ENG_REV_BIN:\$PATH\""
+    ;;
+  *)
+    echo "ENG. REVERSA — Ambiente"
+    echo "──────────────────────────────────────────────────────"
+    printf "%-24s %s\n" "ENG_REV_HOME" "$ENG_REV_HOME"
+    printf "%-24s %s\n" "ENG_REV_WORKSPACES" "$ENG_REV_WORKSPACES"
+    printf "%-24s %s\n" "ENG_REV_TARGETS" "$ENG_REV_TARGETS"
+    printf "%-24s %s\n" "ENG_REV_EXPORTS" "$ENG_REV_EXPORTS"
+    printf "%-24s %s\n" "GHIDRA_INSTALL_DIR" "${GHIDRA_INSTALL_DIR:-<não encontrado>}"
+    printf "%-24s %s\n" "JAVA_HOME" "${JAVA_HOME:-<não encontrado>}"
+    printf "%-24s %s\n" "GHIDRA_MAXMEM" "${GHIDRA_MAXMEM:-}"
+    printf "%-24s %s\n" "node" "$(command -v node || echo '<ausente>')"
+    printf "%-24s %s\n" "rea" "$(command -v rea || echo '<ausente>')"
+    printf "%-24s %s\n" "decomp" "$(command -v decomp || echo '<ausente>')"
+    echo
+    echo "Para usar em outro terminal:  source \"$ENG_REV_HOME/config/env.sh\""
+    ;;
+esac

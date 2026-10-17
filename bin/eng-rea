@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# ============================================================================
+#  eng rea — Wrapper do REA (rea-agents) com ambiente correto
+# ----------------------------------------------------------------------------
+#  Passa todos os argumentos direto para o `rea`, garantindo que
+#  GHIDRA_INSTALL_DIR (12.1.4) e JAVA_HOME estejam configurados.
+#
+#  Exemplos:
+#    eng rea doctor --provider ghidra --json
+#    eng rea analyze /caminho/app --json
+#    eng rea analyze-javascript-application /caminho/electron-app --json
+#    eng rea decompile /caminho/bin 0x401000 --format md
+#    eng rea --help
+# ============================================================================
+set -uo pipefail
+
+ENG_REV_HOME="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+# shellcheck source=/dev/null
+source "$ENG_REV_HOME/config/env.sh"
+
+if ! command -v rea >/dev/null 2>&1; then
+  echo "ERRO: 'rea' não encontrado. Instale com:" >&2
+  echo "  npm install --global rea-agents@latest" >&2
+  exit 1
+fi
+
+if [ $# -eq 0 ]; then
+  cat <<EOF
+eng rea — REA (Reverse Engineer Anything) no ambiente do ENG. REVERSA
+  GHIDRA_INSTALL_DIR = ${GHIDRA_INSTALL_DIR:-<não encontrado>}
+  JAVA_HOME          = ${JAVA_HOME:-<não encontrado>}
+
+Exemplos rápidos:
+  eng rea doctor --json                                   # diagnóstico
+  eng rea analyze <app> --json                            # visão geral
+  eng rea decompile <app> [endereço] --format md          # pseudocódigo
+  eng rea analyze-javascript-application <pasta> --json   # Electron/JS
+  eng rea --help                                          # lista completa (~100 comandos)
+
+Dicas:
+  --format md|json|yaml|jsonl  controla a saída
+  --token-limit <n>            limita o tamanho p/ economizar contexto
+  --snapshot <arquivo>         guarda/reusa a análise entre chamadas
+EOF
+  exit 0
+fi
+
+exec rea "$@"

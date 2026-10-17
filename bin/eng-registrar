@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# ============================================================================
+#  eng registrar — (Re)registra skills e agente nos clientes de agente de IA
+# ----------------------------------------------------------------------------
+#  Idempotente. Faz:
+#    1. Descobre os diretórios de configuração de clientes de agente presentes
+#       nesta máquina (a lista abaixo cobre os formatos mais comuns).
+#    2. Instala (via link simbólico) as skills deste toolkit em cada
+#       "<raiz-do-cliente>/skills/", além do diretório universal ~/.agents/skills.
+#    3. Instala o agente "eng-reversa" em "<raiz-do-cliente>/agents/".
+#
+#  O registro dos servidores MCP (rea/decomp) é feito pelos próprios
+#  instaladores dessas ferramentas ("rea setup", "decomp connect"), que já
+#  detectam os clientes automaticamente.
+#
+#  Rode de novo sempre que mover o toolkit, criar skills novas ou instalar
+#  um cliente de agente novo. Depois: reinicie o cliente de agente.
+# ============================================================================
+set -uo pipefail
+
+ENG_REV_HOME="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+# shellcheck source=/dev/null
+source "$ENG_REV_HOME/config/env.sh"
+
+echo "Registrando o toolkit de engenharia reversa nos clientes de agente..."
+echo "  raiz do toolkit: $ENG_REV_HOME"
+echo
+
+# ---------------------------------------------------------------------------
+# 1. Raízes de configuração de clientes de agente a procurar
+#    (só as que existirem nesta máquina serão usadas; edite livremente)
+# ---------------------------------------------------------------------------
+CANDIDATAS=(
+  "$HOME/.agents"
+  "$HOME/.claude"
+  "$HOME/.config/opencode"
+  "$HOME/.codex"
+  "$HOME/.gemini"
+  "$HOME/.cursor"
+  "$HOME/.config/amp"
+  "$HOME/.configuration"
+)
+
+raizes=()
+for r in "${CANDIDATAS[@]}"; do
+  [ -d "$r" ] && raizes+=("$r")
+done
+if [ ${#raizes[@]} -eq 0 ]; then
+  mkdir -p "$HOME/.agents"
+  raizes=("$HOME/.agents")
+fi
+
+# ---------------------------------------------------------------------------
+# 2. Skills (link simbólico por skill em "<raiz>/skills/")
+# ---------------------------------------------------------------------------
+instalou_skill=0
+for r in "${raizes[@]}"; do
+  dest="$r/skills"
+  mkdir -p "$dest" 2>/dev/null || continue
+  for sk in "$ENG_REV_HOME"/skills/*/; do
+    sk="${sk%/}"
+    [ -d "$sk" ] || continue
+    nome="$(basename "$sk")"
+    ln -sfn "$sk" "$dest/$nome" 2>/dev/null && {
+      echo "  skill  : $dest/$nome"
+      instalou_skill=1
+    }
+  done
+done
+
+# ---------------------------------------------------------------------------
+# 3. Agente (link simbólico em "<raiz>/agents/")
+# ---------------------------------------------------------------------------
+if [ -f "$ENG_REV_HOME/agents/eng-reversa.md" ]; then
+  for r in "${raizes[@]}"; do
+    dest="$r/agents"
+    mkdir -p "$dest" 2>/dev/null || continue
+    ln -sfn "$ENG_REV_HOME/agents/eng-reversa.md" "$dest/eng-reversa.md" 2>/dev/null && \
+      echo "  agente : $dest/eng-reversa.md"
+  done
+fi
+
+echo
+if [ "$instalou_skill" = "1" ]; then
+  echo "Pronto. REINICIE o cliente de agente para carregar skills e agente."
+else
+  echo "Aviso: nenhum diretório de cliente foi encontrado/criado."
+fi
+echo "MCP: confira com 'eng doctor' se os servidores rea e decomp aparecem"
+echo "     registrados. Se não, rode: rea setup        (e)  decomp connect"

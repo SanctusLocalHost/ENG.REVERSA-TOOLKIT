@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# ============================================================================
+#  eng ghidra — Descompilação em massa via Ghidra headless (12.1.4)
+# ----------------------------------------------------------------------------
+#  Analisa um binário e exporta:
+#    - pseudocódigo C de TODAS as funções (um .c por função)
+#    - index-funcoes.tsv (endereço, nome, tamanho, assinatura)
+#    - strings.tsv (todas as strings com endereço)
+#
+#  Uso:
+#    eng ghidra <binario> [--out DIR] [--ws NOME] [--timeout SEG] [--processor ID] [--sem-strings]
+#
+#  --out DIR        Diretório de saída (default: exports/ghidra/<nome>-<data>/)
+#  --ws NOME        Grava em workspace/<NOME>/analise/ghidra-<data>/ em vez de exports/
+#  --timeout SEG    Tempo máximo de análise por arquivo (default: 1800)
+#  --processor ID   Força o processador (ex.: x86:LE:64:default, ARM:LE:32:v7)
+#  --sem-strings    Não exporta strings
+#
+#  Observação: binários grandes podem levar vários minutos. A memória do
+#  headless é limitada por GHIDRA_MAXMEM (env.sh, default 2G).
+# ============================================================================
+set -uo pipefail
+
+ENG_REV_HOME="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+# shellcheck source=/dev/null
+source "$ENG_REV_HOME/config/env.sh"
+
+alvo=""; out=""; ws=""; timeout_s=1800; processor=""; strings=1
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --out) out="${2:-}"; shift 2 ;;
+    --ws) ws="${2:-}"; shift 2 ;;
+    --timeout) timeout_s="${2:-1800}"; shift 2 ;;
+    --processor) processor="${2:-}"; shift 2 ;;
+    --sem-strings) strings=0; shift ;;
+    -h|--help) sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) [ -z "$alvo" ] && alvo="$1" || { echo "Argumento extra: $1" >&2; exit 2; }; shift ;;
+  esac
+done
+
+[ -n "$alvo" ] || { sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[ -f "$alvo" ] || { echo "ERRO: não é um arquivo: $alvo" >&2; exit 1; }
+alvo="$(readlink -f "$alvo")"
+
+if [ -z "${GHIDRA_INSTALL_DIR:-}" ] || [ ! -x "$GHIDRA_INSTALL_DIR/support/analyzeHeadless" ]; then
+  echo "ERRO: Ghidra 12.1.x não encontrada em GHIDRA_INSTALL_DIR." >&2
+  echo "      Esperado em: $ENG_REV_TOOLS/ghidra_12.1.4_PUBLIC" >&2
+  exit 1
+fi
+
+nome="$(basename "$alvo")"
+ts="$(date +%Y%m%d-%H%M%S)"
+
+if [ -n "$out" ]; then
+  saida="$out"
+elif [ -n "$ws" ]; then
+  saida="$ENG_REV_WORKSPACES/$ws/analise/ghidra-$ts"
+  [ -d "$ENG_REV_WORKSPACES/$ws" ] || { echo "ERRO: workspace '$ws' não existe" >&2; exit 1; }
+else
+  saida="$ENG_REV_EXPORTS/ghidra/${nome}-$ts"
+fi
+mkdir -p "$saida"
+
+proj_tmp="$(mktemp -d /tmp/opencode/ghidra-proj.XXXXXX)"
+trap 'rm -rf "$proj_tmp"' EXIT
+
+# ---- monta a lista de scripts de pós-análise ----
+post=(-postScript ExportPseudoC.java "$saida")
+[ "$strings" = "1" ] && post+=(-postScript ExportStrings.java "$saida")
+
+args=("$proj_tmp" "engreversa"
+  -import "$alvo"
+  -scriptPath "$ENG_REV_SCRIPTS"
+  "${post[@]}"
+  -analysisTimeoutPerFile "$timeout_s"
+)
+[ -n "$processor" ] && args+=(-processor "$processor")
+
+export GHIDRA_HEADLESS_MAXMEM="${GHIDRA_HEADLESS_MAXMEM:-$GHIDRA_MAXMEM}"
+
+echo "═══ GHIDRA HEADLESS — ENG. REVERSA ═══"
+echo "  Alvo   : $alvo"
+echo "  Saída  : $saida"
+echo "  Memória: $GHIDRA_HEADLESS_MAXMEM · Timeout/análise: ${timeout_s}s"
+echo "  (binários grandes podem demorar; acompanhe abaixo)"
+echo "─────────────────────────────────────"
+
+log="$saida/ghidra-log.txt"
+"$GHIDRA_INSTALL_DIR/support/analyzeHeadless" "${args[@]}" 2>&1 | tee "$log" | tail -25
+rc="${PIPESTATUS[0]}"
+
+echo "─────────────────────────────────────"
+if [ -f "$saida/index-funcoes.tsv" ]; then
+  n_c=$(find "$saida" -name '*.c' | wc -l)
+  n_ln=$(wc -l < "$saida/index-funcoes.tsv" 2>/dev/null || echo 0)
+  echo "[ok] Funções com pseudocódigo : $n_c"
+  echo "  Índice de funções       : $saida/index-funcoes.tsv ($((n_ln-1)) entradas)"
+  [ -f "$saida/strings.tsv" ] && echo "  Strings                 : $saida/strings.tsv ($(wc -l < "$saida/strings.tsv") linhas)"
+  echo
+  echo "Explore com: eng rizin quick \"$alvo\"   ou   eng rea analyze \"$alvo\" --json"
+else
+  echo "[ERRO] Exportação não produziu index-funcoes.tsv (exit=$rc)."
+  echo "  Dicas: use --processor para forçar a arquitetura; veja o log acima."
+fi
+exit "$rc"

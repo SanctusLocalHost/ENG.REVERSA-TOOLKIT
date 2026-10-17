@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# ============================================================================
+#  eng new — Cria um workspace de análise de engenharia reversa
+# ----------------------------------------------------------------------------
+#  Uso:
+#    eng new <nome> [--alvo <arquivo|pasta>] [--destino <pasta>] [--descricao "texto"]
+#
+#  --alvo     : o software/game a ser analisado (fica registrado e linkado em entrada/)
+#  --destino  : onde a reconstrução final será publicada (ex.: pasta do jogo)
+# ============================================================================
+set -uo pipefail
+
+ENG_REV_HOME="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+# shellcheck source=/dev/null
+source "$ENG_REV_HOME/config/env.sh"
+
+nome=""; alvo=""; destino=""; descricao=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --alvo)      alvo="${2:-}"; shift 2 ;;
+    --destino)   destino="${2:-}"; shift 2 ;;
+    --descricao|--desc) descricao="${2:-}"; shift 2 ;;
+    --force)     force=1; shift ;;
+    -h|--help)
+      sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
+    *) [ -z "$nome" ] && nome="$1" || { echo "Argumento extra: $1" >&2; exit 2; }; shift ;;
+  esac
+done
+
+[ -n "$nome" ] || { echo "Uso: eng new <nome> [--alvo <arquivo|pasta>] [--destino <pasta>] [--descricao \"texto\"]" >&2; exit 2; }
+
+# valida o nome (vira nome de pasta)
+if ! printf '%s' "$nome" | grep -qE '^[a-zA-Z0-9][a-zA-Z0-9._-]*$'; then
+  echo "ERRO: nome inválido '$nome' — use letras, números, ponto, hífen ou underscore." >&2
+  exit 2
+fi
+
+ws="$ENG_REV_WORKSPACES/$nome"
+if [ -d "$ws" ] && [ "${force:-0}" != "1" ]; then
+  echo "ERRO: workspace já existe: $ws" >&2
+  echo "      Use outro nome ou --force para reaproveitar." >&2
+  exit 1
+fi
+
+mkdir -p "$ws"/{entrada,analise,reconstrucao,relatorios}
+
+# ---- registra metadados em workspace.json ----
+alvo_abs=""; [ -n "$alvo" ] && alvo_abs="$(readlink -f "$alvo" 2>/dev/null || echo "$alvo")"
+destino_abs=""; [ -n "$destino" ] && { mkdir -p "$destino"; destino_abs="$(readlink -f "$destino")"; }
+
+python3 - "$ws/workspace.json" "$nome" "$alvo_abs" "$destino_abs" "$descricao" <<'PY'
+import json, sys, datetime
+dest, nome, alvo, destino, descricao = sys.argv[1:6]
+data = {
+    "nome": nome,
+    "criado_em": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+    "alvo_original": alvo or None,
+    "diretorio_destino": destino or None,
+    "descricao": descricao or None,
+    "status": "novo"
+}
+with open(dest, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+PY
+
+# ---- link simbólico do alvo dentro de entrada/ (não copia gigabytes) ----
+if [ -n "$alvo_abs" ] && [ -e "$alvo_abs" ]; then
+  lnk="$ws/entrada/$(basename "$alvo_abs")"
+  [ -e "$lnk" ] || ln -s "$alvo_abs" "$lnk"
+fi
+
+# ---- LEIA-ME do workspace ----
+cat > "$ws/LEIA-ME.md" <<EOF
+# Workspace: $nome
+
+- **Alvo original**   : ${alvo_abs:-(não definido — coloque o binário em \`entrada/\`)}
+- **Destino da obra** : ${destino_abs:-(não definido — use \`eng publish $nome --destino <pasta>\`)}
+- **Criado em**        : $(date '+%Y-%m-%d %H:%M')
+
+## Organização
+| Pasta | O que vai aqui |
+|-------|----------------|
+| \`entrada/\`       | Alvo original (link simbólico) + amostras relacionadas |
+| \`analise/\`       | Triagem, pseudocódigo, notas, dumps, strings, capturas |
+| \`reconstrucao/\`  | Código/assets recriados — espelha a estrutura do destino final |
+| \`relatorios/\`    | Relatórios finais: como funciona, o que foi recriado, pendências |
+
+## Próximos passos típicos
+\`\`\`bash
+eng triage "<alvo>" --salvar $nome
+eng rea analyze "<alvo>" --json        # ou
+eng decomp ...                          # se for ROM/ISO de game
+\`\`\`
+A reconstrução deve ser escrita em \`reconstrucao/\` espelhando a árvore do
+diretório destino; depois \`eng publish $nome --exec\` copia para lá.
+EOF
+
+echo "Workspace criado: $ws"
+echo
+printf "  %-12s %s\n" "alvo:"    "${alvo_abs:-<não definido>}"
+printf "  %-12s %s\n" "destino:" "${destino_abs:-<não definido>}"
+echo
+echo "Próximo passo sugerido:"
+echo "  eng triage \"${alvo_abs:-<alvo>}\" --salvar $nome"

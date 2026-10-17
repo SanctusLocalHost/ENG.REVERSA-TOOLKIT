@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# ============================================================================
+#  eng rizin — Wrapper do Rizin (inspeção rápida de binários)
+# ----------------------------------------------------------------------------
+#  Uso:
+#    eng rizin [argumentos rizin...]         Passthrough completo
+#    eng rizin quick <binario>               Análise rápida: info + funções + strings
+#    eng rizin diff <binarioA> <binarioB>    Compara hashes/tamanho/seções
+# ============================================================================
+set -uo pipefail
+
+ENG_REV_HOME="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+# shellcheck source=/dev/null
+source "$ENG_REV_HOME/config/env.sh"
+
+if ! command -v rizin >/dev/null 2>&1; then
+  echo "ERRO: 'rizin' não encontrado. Instale: sudo apt install rizin" >&2
+  exit 1
+fi
+
+case "${1:-}" in
+  quick)
+    bin="${2:-}"
+    [ -n "$bin" ] || { echo "Uso: eng rizin quick <binario>" >&2; exit 2; }
+    [ -f "$bin" ] || { echo "ERRO: não existe: $bin" >&2; exit 1; }
+    echo "═══ RIZIN QUICK: $(basename "$bin") ═══"
+    echo "--- Informações (iI) ---"
+    rizin -q -c 'iI' "$bin" 2>/dev/null
+    echo "--- Cabeçalho (iH) ---"
+    rizin -q -c 'iH' "$bin" 2>/dev/null | head -20
+    echo "--- Seções (iS) ---"
+    rizin -q -c 'iS' "$bin" 2>/dev/null | head -25
+    echo "--- Entrypoints ---"
+    rizin -q -c 'ie' "$bin" 2>/dev/null
+    echo "--- Funções (análise) ---"
+    count="$(rizin -q -c 'aa; aflc' "$bin" 2>/dev/null)"
+    echo "Total de funções detectadas: ${count:-0}"
+    rizin -q -c 'aa; afl~[0]' "$bin" 2>/dev/null | head -30
+    echo "--- Strings notáveis (top 25) ---"
+    rizin -q -c 'izq' "$bin" 2>/dev/null | head -25
+    ;;
+  diff)
+    a="${2:-}"; b="${3:-}"
+    [ -n "$a" ] && [ -n "$b" ] || { echo "Uso: eng rizin diff <a> <b>" >&2; exit 2; }
+    echo "A: $(sha256sum "$a" | cut -c1-16)  $(stat -c %s "$a") bytes  $a"
+    echo "B: $(sha256sum "$b" | cut -c1-16)  $(stat -c %s "$b") bytes  $b"
+    echo "--- Seções A ---"; rizin -q -c 'iS' "$a" 2>/dev/null | head -20
+    echo "--- Seções B ---"; rizin -q -c 'iS' "$b" 2>/dev/null | head -20
+    ;;
+  ""|-h|--help|help)
+    cat <<EOF
+eng rizin — inspeção rápida de binários com Rizin
+
+  eng rizin [args...]         Passa direto para o rizin
+  eng rizin quick <binario>   Info + seções + funções + strings de uma vez
+  eng rizin diff <a> <b>      Comparação rápida entre dois binários
+
+Exemplos de passthrough úteis:
+  eng rizin -q -c 'aa; pdf @ main' <bin>     # disassembly de main
+  eng rizin -q -c 'aa; axt @ sym.imp.strlen' <bin>  # quem chama strlen
+  eng rizin -A <bin>                          # sessão interativa
+EOF
+    ;;
+  *)
+    exec rizin "$@"
+    ;;
+esac

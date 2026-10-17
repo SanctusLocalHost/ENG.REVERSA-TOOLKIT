@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# ============================================================================
+#  eng list — Lista os workspaces de engenharia reversa
+# ============================================================================
+set -uo pipefail
+
+ENG_REV_HOME="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+# shellcheck source=/dev/null
+source "$ENG_REV_HOME/config/env.sh"
+
+echo "Workspaces em $ENG_REV_WORKSPACES"
+echo "───────────────────────────────────────────────────────────────────────────────"
+printf "%-22s %-40s %s\n" "NOME" "ALVO" "STATUS"
+encontrou=0
+for ws in "$ENG_REV_WORKSPACES"/*/; do
+  [ -d "$ws" ] || continue
+  nome="$(basename "$ws")"
+  [ "$nome" = "_TEMPLATE" ] && continue
+  encontrou=1
+  meta="$ws/workspace.json"
+  if [ -f "$meta" ]; then
+    python3 - "$meta" "$nome" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1]) as f: d = json.load(f)
+except Exception:
+    print(f"{sys.argv[2]:<22} {'(workspace.json ilegível)':<40} ?"); raise SystemExit
+alvo = d.get("alvo_original") or "-"
+if len(alvo) > 38: alvo = "..." + alvo[-37:]
+print(f"{d.get('nome', sys.argv[2]):<22} {alvo:<40} {d.get('status','?')}")
+PY
+  else
+    printf "%-22s %-40s %s\n" "$nome" "(sem workspace.json)" "?"
+  fi
+done
+[ "$encontrou" = "0" ] && echo "  (nenhum ainda — crie com: eng new <nome> --alvo <arquivo>)"
+
+echo
+echo "Template disponível em: workspace/_TEMPLATE/"

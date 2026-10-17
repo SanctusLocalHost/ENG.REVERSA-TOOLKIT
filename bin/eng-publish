@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# ============================================================================
+#  eng publish — Publica a reconstrução de um workspace no diretório destino
+# ----------------------------------------------------------------------------
+#  Copia workspace/<nome>/reconstrucao/** para o diretório destino registrado
+#  no workspace.json (ou informado com --destino).
+#
+#  SEGURANÇA: por padrão é DRY-RUN (só mostra o que faria).
+#             Use --exec para aplicar de verdade.
+#
+#  Uso:
+#    eng publish <nome> [--destino <pasta>] [--exec] [--sobrescrever]
+# ============================================================================
+set -uo pipefail
+
+ENG_REV_HOME="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+# shellcheck source=/dev/null
+source "$ENG_REV_HOME/config/env.sh"
+
+nome=""; destino=""; exec_flag=0; sobrescrever=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --destino) destino="${2:-}"; shift 2 ;;
+    --exec) exec_flag=1; shift ;;
+    --sobrescrever) sobrescrever=1; shift ;;
+    -h|--help) sed -n '3,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) [ -z "$nome" ] && nome="$1" || { echo "Argumento extra: $1" >&2; exit 2; }; shift ;;
+  esac
+done
+[ -n "$nome" ] || { echo "Uso: eng publish <nome> [--destino <pasta>] [--exec] [--sobrescrever]" >&2; exit 2; }
+
+ws="$ENG_REV_WORKSPACES/$nome"
+[ -d "$ws" ] || { echo "ERRO: workspace não existe: $ws" >&2; exit 1; }
+orig="$ws/reconstrucao"
+[ -d "$orig" ] || { echo "ERRO: sem pasta reconstrucao/ em $ws" >&2; exit 1; }
+
+# destino: argumento > workspace.json
+if [ -z "$destino" ] && [ -f "$ws/workspace.json" ]; then
+  destino="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('diretorio_destino') or '')" "$ws/workspace.json" 2>/dev/null || true)"
+fi
+[ -n "$destino" ] || { echo "ERRO: destino não definido. Use --destino <pasta> ou registre no workspace." >&2; exit 1; }
+mkdir -p "$destino"
+destino="$(readlink -f "$destino")"
+
+n_arq=$(find "$orig" -type f | wc -l)
+echo "Publicação: $nome"
+echo "  origem : $orig ($n_arq arquivos)"
+echo "  destino: $destino"
+echo
+
+flags=(-rlptD --info=progress2)
+[ "$sobrescrever" = "1" ] && flags+=(--delete)
+
+if command -v rsync >/dev/null 2>&1; then
+  if [ "$exec_flag" = "0" ]; then
+    echo "[DRY-RUN] Comando que seria executado:"
+    echo "  rsync ${flags[*]} \"$orig/\" \"$destino/\""
+    echo
+    rsync -n "${flags[@]}" "$orig/" "$destino/" 2>/dev/null | sed 's/^/  /' | head -60
+    [ "$(rsync -n "${flags[@]}" "$orig/" "$destino/" 2>/dev/null | wc -l)" -gt 60 ] && echo "  ... (lista truncada)"
+    echo
+    echo "Para aplicar:  eng publish $nome --exec"
+  else
+    rsync "${flags[@]}" "$orig/" "$destino/"
+    echo
+    echo "[ok] Reconstrução publicada em: $destino"
+  fi
+else
+  # fallback sem rsync
+  if [ "$exec_flag" = "0" ]; then
+    echo "[DRY-RUN] rsync não instalado; usaria: cp -r"
+    (cd "$orig" && find . -type f | sort | sed 's/^/  /' | head -60)
+    echo "Para aplicar:  eng publish $nome --exec"
+  else
+    cp -r "$orig/." "$destino/"
+    echo "[ok] Reconstrução publicada em: $destino"
+  fi
+fi

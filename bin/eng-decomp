@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# ============================================================================
+#  eng decomp — Wrapper do decomp.wtf (descompilação byte-a-byte de games)
+# ----------------------------------------------------------------------------
+#  Passa todos os argumentos direto para o `decomp`.
+#
+#  Exemplos:
+#    eng decomp connect opencode             # 1x: dá as ferramentas ao OpenCode
+#    eng decomp                               # abre o app (navegador)
+#    eng decomp import <rom|iso> <projeto>    # importa um game (sua cópia)
+#    eng decomp export <projeto> <pasta>      # exporta árvore decompilável
+#    eng decomp --help
+# ============================================================================
+set -uo pipefail
+
+ENG_REV_HOME="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+# shellcheck source=/dev/null
+source "$ENG_REV_HOME/config/env.sh"
+
+if ! command -v decomp >/dev/null 2>&1; then
+  echo "ERRO: 'decomp' não encontrado. Instale com:" >&2
+  echo "  curl -fsSL https://raw.githubusercontent.com/i12bp8/decomp.wtf/main/site/public/install.sh | bash" >&2
+  exit 1
+fi
+
+if [ $# -eq 0 ]; then
+  cat <<EOF
+eng decomp — decomp.wtf no ambiente do toolkit de engenharia reversa
+
+Plataformas recomendadas: GameCube, Wii e Nintendo 64 (mais testadas).
+Também: PS1, PS2, GBA, DS (beta). Projetos em ~/Decomp por padrão.
+
+Exemplos rápidos:
+  eng decomp connect                 # registra as ferramentas MCP nos clientes de agente
+  eng decomp import "rom.z64" jogo   # importa sua cópia do game
+  eng decomp export jogo ./dump      # exporta árvore de decomp
+
+REGRA DE USO: apenas games que VOCÊ possui; não publique código
+descompilado de terceiros.
+EOF
+  exit 0
+fi
+
+exec decomp "$@"

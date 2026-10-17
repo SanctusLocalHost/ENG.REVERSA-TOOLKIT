@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# ============================================================================
+#  eng — CLI principal do ENG. REVERSA (dispatcher modular)
+# ----------------------------------------------------------------------------
+#  Cada subcomando é um arquivo independente em bin/eng-<nome>.
+#  Para adicionar um comando novo, basta criar bin/eng-<nome> executável.
+# ============================================================================
+set -uo pipefail
+
+ENG_REV_HOME="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+BIN_DIR="$ENG_REV_HOME/bin"
+
+cmd="${1:-ajuda}"
+shift 2>/dev/null || true
+
+if [ "$cmd" = "ajuda" ] || [ "$cmd" = "help" ] || [ "$cmd" = "-h" ] || [ "$cmd" = "--help" ]; then
+  cat <<EOF
+ENG. REVERSA — central de engenharia reversa desta máquina
+Raiz: $ENG_REV_HOME
+
+Uso: eng <comando> [argumentos]
+
+Comandos disponíveis:
+  doctor                  Verifica se todas as ferramentas estão instaladas e prontas
+  triage <arquivo>        Identifica um alvo (tipo, sinais) e recomenda o motor de análise
+  new <nome>              Cria um workspace de análise (--alvo, --destino, --descricao)
+  list                    Lista os workspaces de análise existentes
+  publish <nome>          Publica a reconstrução no diretório destino (dry-run por padrão)
+  report <nome>           Resumo do estado de um workspace
+  rea [args...]           REA (rea-agents) — binários, apps, Android, Electron, .NET, web
+  decomp [args...]        decomp.wtf — descompilação byte-a-byte de games (N64/PS1/GC/GBA/DS...)
+  ghidra <binario>        Exportação em massa via Ghidra headless (pseudocódigo C)
+  rizin [args...]         Rizin (radare2-like) — inspeção rápida de binários
+  env                     Mostra as variáveis de ambiente configuradas
+
+Atalhos:
+  eng ajuda               Esta mensagem
+  eng <cmd> --help        Ajuda específica de cada subcomando
+
+Documentação: $ENG_REV_HOME/docs/
+EOF
+  exit 0
+fi
+
+sub="$BIN_DIR/eng-$cmd"
+
+if [ -x "$sub" ]; then
+  exec "$sub" "$@"
+fi
+
+echo "ERRO: subcomando desconhecido: '$cmd'" >&2
+echo "Comandos disponíveis:" >&2
+for f in "$BIN_DIR"/eng-*; do
+  [ -x "$f" ] && echo "  $(basename "$f" | sed 's/^eng-//')" >&2
+done
+exit 2

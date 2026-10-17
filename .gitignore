@@ -1,0 +1,20 @@
+# Ferramentas e dados baixados nesta máquina (não versionar)
+tools/
+
+# Dados de trabalho: cada máquina/cliente tem os seus
+workspace/*
+!workspace/_TEMPLATE/
+targets/*
+!targets/LEIA-ME.md
+exports/*
+!exports/LEIA-ME.md
+
+# Configurações e artefatos locais
+.env
+*.bak
+*.local
+ghidra-log.txt
+
+# Sistema
+.DS_Store
+Thumbs.db

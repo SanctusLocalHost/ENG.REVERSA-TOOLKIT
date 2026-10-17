@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+# ============================================================================
+#  eng triage — Identifica um alvo e recomenda o motor de engenharia reversa
+# ----------------------------------------------------------------------------
+#  Uso:
+#    eng triage <arquivo|diretorio> [--salvar <workspace>]
+#
+#  Saída: tipo do arquivo, hashes, sinais detectados (motor/engine, packing,
+#  .NET, Unity, Electron, ROM etc.) e PRÓXIMOS PASSOS com comandos prontos.
+# ============================================================================
+set -uo pipefail
+
+ENG_REV_HOME="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+# shellcheck source=/dev/null
+source "$ENG_REV_HOME/config/env.sh"
+
+alvo=""; salvar=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --salvar) salvar="${2:-}"; shift 2 ;;
+    -h|--help)
+      echo "Uso: eng triage <arquivo|diretorio> [--salvar <workspace>]"
+      echo "  --salvar <workspace>  Grava o resultado em workspace/<nome>/analise/TRIAGEM.md"
+      exit 0 ;;
+    *) [ -z "$alvo" ] && alvo="$1" || { echo "Argumento extra: $1" >&2; exit 2; }; shift ;;
+  esac
+done
+
+[ -n "$alvo" ] || { echo "Uso: eng triage <arquivo|diretorio> [--salvar <workspace>]" >&2; exit 2; }
+[ -e "$alvo" ]  || { echo "ERRO: não existe: $alvo" >&2; exit 1; }
+alvo="$(readlink -f "$alvo")"
+
+# ---------------------------------------------------------------------------
+# Coleta básica
+# ---------------------------------------------------------------------------
+nome="$(basename "$alvo")"
+ext="${nome##*.}"; [ "$ext" = "$nome" ] && ext=""
+tipo="$(file -b "$alvo" 2>/dev/null || echo '?')"
+if [ -d "$alvo" ]; then
+  tam="$(du -sh "$alvo" 2>/dev/null | cut -f1)"
+  sha="(diretório)"
+else
+  tam="$(numfmt --to=iec "$(stat -c %s "$alvo")" 2>/dev/null || stat -c %s "$alvo")"
+  sha="$(sha256sum "$alvo" | cut -d' ' -f1)"
+fi
+
+# ---------------------------------------------------------------------------
+# Assinaturas e heurísticas
+# ---------------------------------------------------------------------------
+sinais=(); motor=""; motor_detalhe=""; passos=()
+add() { sinais+=("$1"); }
+tem_string() { strings -n 6 "$alvo" 2>/dev/null | grep -qiE "$1" 2>/dev/null; }
+so_cabeca() { head -c "${2:-4M}" "$alvo" 2>/dev/null | strings -n 6 | grep -qiE "$1"; }
+
+is_zip=0
+case "$tipo" in *[Zz]ip*|*[Jj]ava\ archive*|*APK*|*EPUB*) is_zip=1 ;; esac
+case "$ext" in apk|jar|zip|xpi|ccz|nupkg|whl|ipa|love) is_zip=1 ;; esac
+
+case "$ext" in
+  # ------- ROMs / imagens de disco (decomp.wtf) -------
+  z64|n64|v64|rom|gba|gb|gbc|nds|3ds|cia|cci|iso|gcm|rvz|wbfs|wia|ciso|gcz|chd|cue|nsp|xci|dol|elf|prx|ps2|psx|bin)
+    motor="decomp.wtf"; motor_detalhe="Game para descompilação byte-a-byte (ROM/ISO)"
+    add "extensão de ROM/imagem de disco: .$ext" ;;
+esac
+
+# --- diretórios comuns de projetos de decomp / assets de jogos ---
+if [ -d "$alvo" ]; then
+  for marca in "config.yml:splat" "pyproject.toml:projeto Python" "doldecomp.yml:decomp GameCube/Wii" "objdiff.json:projeto objdiff" "splat.yaml:splat" "decomp.yaml:decomp"; do
+    f="${marca%%:*}"; d="${marca##*:}"
+    [ -e "$alvo/$f" ] && { add "projeto detectado: $f ($d)"; [ -z "$motor" ] && { motor="decomp.wtf"; motor_detalhe="Projeto de decomp existente"; }; }
+  done
+  # APK descompactado
+  if [ -f "$alvo/AndroidManifest.xml" ]; then
+    add "APK descompactado (AndroidManifest.xml presente)"
+    motor="rea"; motor_detalhe="Cliente Android — manifest, DEX/libs nativas"
+  fi
+  [ -f "$alvo/resources.arsc" ] && add "resources.arsc (recursos Android)"
+  # Unity (IL2CPP ou Mono)
+  if [ -f "$alvo/global-metadata.dat" ] || [ -f "$alvo/assets/bin/Data/global-metadata.dat" ]; then
+    add "Unity IL2CPP (global-metadata.dat)"
+    motor="rea"; motor_detalhe="Unity IL2CPP — libil2cpp.so + metadata; ver Il2CppDumper"
+  fi
+  if [ -f "$alvo/assets/bin/Data/Managed" ] || [ -d "$alvo/assets/bin/Data/Managed" ]; then
+    add "Unity Mono (Data/Managed)"
+    [ -z "$motor" ] && { motor="rea"; motor_detalhe="Unity Mono — DLLs .NET inspecionáveis"; }
+  fi
+  # cliente mobile com assets em packs (padrão TibiaME/J2ME/Android antigo)
+  if [ -f "$alvo/settings.dat" ] && ls -d "$alvo"/pack* >/dev/null 2>&1; then
+    add "assets extraídos de cliente mobile (packs + settings.dat)"
+    [ -z "$motor" ] && { motor="rea"; motor_detalhe="Cliente nativo (assets locais + protocolo de rede) — o APK original define o binário"; }
+  fi
+  if [ -f "$alvo/index.html" ] || [ -f "$alvo/main.js" ]; then
+    add "projeto web (index.html/main.js)"
+    [ -z "$motor" ] && { motor="rea"; motor_detalhe="Web/JS — análise estática de bundle"; }
+  fi
+  if [ -e "$alvo/resources/app.asar" ] || [ -n "$(find "$alvo" -maxdepth 2 -name 'app.asar' 2>/dev/null | head -1)" ]; then
+    motor="rea"; motor_detalhe="Aplicativo Electron (app.asar) — análise estática de JavaScript"
+    add "Electron: app.asar encontrado"
+  fi
+  [ -n "$(find "$alvo" -maxdepth 2 -name '*.dll' -path '*Managed*' 2>/dev/null | head -1)" ] && { add "Unity Mono: pasta Managed/*.dll"; [ -z "$motor" ] && { motor="rea"; motor_detalhe="Unity Mono — inspecionar DLLs .NET"; }; }
+fi
+
+# --- ELF / PE / Mach-O ---
+case "$tipo" in
+  *ELF*) add "binário nativo ELF ($tipo)"
+         [ -z "$motor" ] && { motor="rea"; motor_detalhe="Binário nativo → provider Ghidra (pseudocódigo)"; } ;;
+  *PE32*) 
+    if so_cabeca 'mscoree\.dll|#~|BSJB' || tem_string 'BSJB'; then
+      add "PE .NET/CLI (BSJB/mscoree)"
+      [ -z "$motor" ] && { motor="rea"; motor_detalhe="Assembly .NET (análise estática, sem provider)"; }
+    else
+      add "binário nativo PE ($tipo)"
+      [ -z "$motor" ] && { motor="rea"; motor_detalhe="Binário Windows → provider Ghidra"; }
+    fi ;;
+  *Mach-O*) add "binário Mach-O (macOS)"
+     [ -z "$motor" ] && { motor="rea"; motor_detalhe="Binário nativo → provider Ghidra"; } ;;
+  *WebAssembly*) add "módulo WASM"
+     [ -z "$motor" ] && { motor="rea"; motor_detalhe="WASM — inspeção de imports/exports e WAT"; } ;;
+esac
+
+# --- Unity IL2CPP / engines móveis / pacotes ---
+if [ "$is_zip" -eq 1 ] && [ -f "$alvo" ]; then
+  entries="$(unzip -l "$alvo" 2>/dev/null | head -80 || true)"
+  echo "$entries" | grep -q "AndroidManifest.xml" && { add "pacote Android (APK)"; [ -z "$motor" ] && { motor="rea"; motor_detalhe="APK Android — manifest, classes, métodos"; }; }
+  echo "$entries" | grep -q "libil2cpp.so"          && { add "Unity IL2CPP (libil2cpp.so)"; motor="rea"; motor_detalhe="Unity IL2CPP — libil2cpp.so + global-metadata.dat"; }
+  echo "$entries" | grep -q "libflutter.so"          && { add "Flutter (libflutter.so)";   [ -z "$motor" ] && { motor="rea"; motor_detalhe="Flutter — Dart AOT snapshot"; }; }
+  echo "$entries" | grep -qi "libUE4\.so\|libUnreal" && { add "Unreal Engine";            [ -z "$motor" ] && { motor="rea"; motor_detalhe="Unreal — libs nativas + assets"; }; }
+  echo "$entries" | grep -q "libcocos"               && { add "Cocos2d-x";                 [ -z "$motor" ] && { motor="rea"; motor_detalhe="Cocos — libs nativas + scripts"; }; }
+  echo "$entries" | grep -q "classes.dex"            && add "classes.dex presente"
+  echo "$entries" | grep -qi "\.jar$"                && add "JAR embutido"
+fi
+
+# --- empacotadores / runtimes embutidos ---
+if [ -f "$alvo" ]; then
+  so_cabeca 'UPX!' && { add "compactado com UPX (packer)"; passos+=("descompactar antes: upx -d \"$alvo\" -o alvo_descompactado"); }
+  so_cabeca 'PyInstaller|pyi-' && { add "empacotado com PyInstaller (Python congelado)"; passos+=("extrair Python: pyinstxtractor-ng \"$alvo\""); }
+  so_cabeca 'DOTNET_BUNDLE' && add ".NET single-file bundle (extrair com ds-store/bundle tools)"
+  so_cabeca 'godot|GDPC' && add "possível Godot (.pck)"
+  case "$ext" in asar) motor="rea"; motor_detalhe="Archive Electron/ASAR — análise estática JavaScript"; add "arquivo .asar";; esac
+  [ "$ext" = "wasm" ] && { motor="rea"; motor_detalhe="WASM — inspect_wasm_artifact"; }
+  [ "$ext" = "dex" ] && { motor="rea"; motor_detalhe="DEX — decompilar classes (precisa jadx)"; }
+  [ "$ext" = "apk" ] && { motor="rea"; motor_detalhe="APK Android"; }
+  case "$ext" in pck) add "formato Godot .pck" ;; rpa|rpyc) add "asset Ren'Py (.rpa/.rpyc)"; passos+=("extrair: unrpa/unrpyc (pip)");; rgss|rgss3a) add "asset RPG Maker (.rgss/RGSS3a)";; 
+    swf) add "Flash SWF — usar ffdec (JPEXS)";; pc|uasset|pak) add "possível Unreal (.pak/.uasset)";; win) add "possível GameMaker data.win";; 
+    lua|luac) add "Lua/Luac — descompilar com luadec/unluac";; pyc) add "Python bytecode (.pyc)";; class) add "classe Java (.class)";; 
+    dll|exe) : ;; esac
+  # assinatura de GameMaker (FORM....DATA)
+  if [ "$(head -c 8 "$alvo" 2>/dev/null | tail -c 4)" = "FORM" ]; then add "assinatura FORM (GameMaker data.win ou similar)"; fi
+fi
+
+[ -z "$motor" ] && { motor="rea"; motor_detalhe="Fallback: análise genérica REA (identificação por conteúdo)"; }
+
+# ---------------------------------------------------------------------------
+# Saída
+# ---------------------------------------------------------------------------
+saida="$(
+cat <<EOF
+════════════════════════════════════════════════════════
+ TRIAGEM: $nome
+════════════════════════════════════════════════════════
+ Arquivo   : $alvo
+ Tipo      : $tipo
+ Tamanho   : $tam
+ SHA-256   : $sha
+ Sinais    : $([ ${#sinais[@]} -gt 0 ] && printf '%s; ' "${sinais[@]}" || echo '(nenhum específico)')
+
+ MOTOR RECOMENDADO : ${motor:-indefinido}
+ Por quê            : $motor_detalhe
+────────────────────────────────────────────────────────
+ PRÓXIMOS PASSOS
+  1. eng new <nome-do-projeto> --alvo "$alvo" [--destino <pasta-do-jogo>]
+EOF
+)"
+
+if [ "$motor" = "decomp.wtf" ]; then
+  saida+="
+  2. Importar no decomp.wtf:
+       eng decomp connect                     # 1x: registra o MCP nos clientes de agente
+       eng decomp import \"$alvo\" <projeto>    # abre o app e importa
+  3. Ou, se já existe projeto de decomp: use direto no projeto."
+elif [ "$motor" = "rea" ]; then
+  saida+="
+  2. Visão geral:
+       eng rea analyze \"$alvo\" --json
+  3. Detalhar / descompilar:
+       eng rea inspect \"$alvo\" --json          # inventário
+       eng rea decompile \"$alvo\" --json        # ler uma parte como código
+  4. Sessão binária com provider Ghidra (via CLI ou MCP):
+       eng rea analyze \"$alvo\" --provider ghidra --json
+     Se o cliente de agente tiver o servidor MCP 'rea' registrado, as mesmas
+     ferramentas aparecem nativamente na sessão, sem linha de comando."
+fi
+
+for p in "${passos[@]}"; do saida+="
+  *  $p"; done
+
+saida+="
+════════════════════════════════════════════════════════"
+
+echo -e "$saida"
+
+if [ -n "$salvar" ]; then
+  ws="$ENG_REV_WORKSPACES/$salvar"
+  if [ -d "$ws" ]; then
+    mkdir -p "$ws/analise"
+    { echo "# Triagem — $nome"; echo; echo '```'; echo -e "$saida"; echo '```'; } > "$ws/analise/TRIAGEM.md"
+    echo
+    echo "Salvo em: $ws/analise/TRIAGEM.md"
+  else
+    echo "AVISO: workspace '$salvar' não existe (crie com: eng new $salvar)" >&2
+  fi
+fi

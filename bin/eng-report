@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# ============================================================================
+#  eng report — Resumo do estado de um workspace de análise
+# ----------------------------------------------------------------------------
+#  Uso:
+#    eng report <nome> [--salvar]
+#
+#  Mostra: metadados, conteúdo de cada pasta, índice de pseudocódigo (se houver)
+#  e as primeiras linhas da triagem. Com --salvar grava em relatorios/.
+# ============================================================================
+set -uo pipefail
+
+ENG_REV_HOME="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+# shellcheck source=/dev/null
+source "$ENG_REV_HOME/config/env.sh"
+
+nome=""; salvar=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --salvar) salvar=1; shift ;;
+    -h|--help) echo "Uso: eng report <nome> [--salvar]"; exit 0 ;;
+    *) [ -z "$nome" ] && nome="$1" || { echo "Argumento extra: $1" >&2; exit 2; }; shift ;;
+  esac
+done
+[ -n "$nome" ] || { echo "Uso: eng report <nome> [--salvar]" >&2; exit 2; }
+
+ws="$ENG_REV_WORKSPACES/$nome"
+[ -d "$ws" ] || { echo "ERRO: workspace não existe: $ws" >&2; exit 1; }
+
+gerar() {
+  echo "════════════════════════════════════════════════════════"
+  echo " RELATÓRIO — $nome"
+  echo "════════════════════════════════════════════════════════"
+  if [ -f "$ws/workspace.json" ]; then
+    python3 - "$ws/workspace.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+for k in ("criado_em","status","alvo_original","diretorio_destino","descricao"):
+    if d.get(k): print(f"  {k:20s}: {d[k]}")
+PY
+  fi
+  echo
+  for sub in entrada analise reconstrucao relatorios; do
+    n="$(find "$ws/$sub" -type f 2>/dev/null | wc -l)"
+    tam="$(du -sh "$ws/$sub" 2>/dev/null | cut -f1)"
+    printf "  %-14s %4s arquivos  %s\n" "$sub/" "$n" "${tam:-0}"
+  done
+  echo
+
+  for idx in "$ws"/analise/ghidra-*/index-funcoes.tsv; do
+    [ -f "$idx" ] || continue
+    echo "── Índice Ghidra: $idx"
+    echo "   Funções: $(( $(wc -l < "$idx") - 1 ))"
+    echo "   Maiores funções (top 10):"
+    sort -t$'\t' -k3 -nr "$idx" 2>/dev/null | head -10 | awk -F'\t' '{printf "     %s  %8s bytes  %s\n", $1, $3, $2}'
+    echo
+  done
+
+  if [ -f "$ws/analise/TRIAGEM.md" ]; then
+    echo "── Triagem (início) ──"
+    sed -n '1,20p' "$ws/analise/TRIAGEM.md" | sed 's/^/   /'
+    echo
+  fi
+
+  echo "── Reconstrução (pendente de publicação) ──"
+  find "$ws/reconstrucao" -type f 2>/dev/null | sed "s|$ws/reconstrucao/|   |" | head -40
+  nrec="$(find "$ws/reconstrucao" -type f | wc -l)"
+  [ "$nrec" = "0" ] && echo "   (vazio — escreva aqui o material recriado)"
+  echo
+  echo "Publicar: eng publish $nome            (dry-run)"
+  echo "          eng publish $nome --exec     (aplica no destino)"
+  echo "════════════════════════════════════════════════════════"
+}
+
+if [ "$salvar" = "1" ]; then
+  mkdir -p "$ws/relatorios"
+  arq="$ws/relatorios/RELATORIO-$(date +%Y%m%d-%H%M).md"
+  { echo '```'; gerar; echo '```'; } > "$arq"
+  echo "Relatório salvo em: $arq"
+else
+  gerar
+fi

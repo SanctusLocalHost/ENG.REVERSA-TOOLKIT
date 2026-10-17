@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# ============================================================================
+#  eng doctor — Diagnóstico completo das ferramentas de engenharia reversa
+# ----------------------------------------------------------------------------
+#  Uso:
+#    eng doctor            Diagnóstico rápido
+#    eng doctor --deep     Inclui o doctor do REA (valida o provider Ghidra)
+# ============================================================================
+set -uo pipefail
+
+ENG_REV_HOME="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+# shellcheck source=/dev/null
+source "$ENG_REV_HOME/config/env.sh"
+
+falhas=0; avisos=0
+ok()    { printf "  [ok]    %-22s %s\n" "$1" "$2"; }
+erro()  { printf "  [ERRO]  %-22s %s\n" "$1" "$2"; falhas=$((falhas+1)); }
+aviso() { printf "  [aviso] %-22s %s\n" "$1" "$2"; avisos=$((avisos+1)); }
+
+echo "ENG. REVERSA — Diagnóstico"
+echo "  Raiz: $ENG_REV_HOME"
+echo
+echo "Motores principais"
+
+# ---- REA -------------------------------------------------------------------
+rea_bin="$(command -v rea || true)"
+if [ -n "$rea_bin" ]; then
+  ok "REA (rea-agents)" "$(rea --version 2>/dev/null || echo '?') em $rea_bin"
+else
+  erro "REA (rea-agents)" "instale: npm install --global rea-agents@latest (ou rode ./install.sh)"
+fi
+
+# ---- decomp.wtf ------------------------------------------------------------
+decomp_bin="$(command -v decomp || true)"
+if [ -n "$decomp_bin" ]; then
+  ok "decomp.wtf" "$(decomp --version 2>/dev/null || echo 'instalado') em $decomp_bin"
+else
+  aviso "decomp.wtf" "opcional (games retrô): ./install.sh --with-decomp-wtf"
+fi
+
+# ---- Ghidra 12.1.x ---------------------------------------------------------
+if [ -n "${GHIDRA_INSTALL_DIR:-}" ] && [ -x "$GHIDRA_INSTALL_DIR/support/analyzeHeadless" ]; then
+  gver="$(grep -m1 '^application.version=' "$GHIDRA_INSTALL_DIR/Ghidra/application.properties" 2>/dev/null | cut -d= -f2)"
+  ok "Ghidra" "$gver em $GHIDRA_INSTALL_DIR"
+  case "$gver" in
+    12.1*) ;;
+    *) aviso "Ghidra" "o REA exige a linha 12.1.x; encontrada $gver" ;;
+  esac
+else
+  erro "Ghidra 12.1.x" "não encontrada em tools/ (rode ./install.sh)"
+fi
+
+# ---- Java ------------------------------------------------------------------
+if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+  ok "JDK" "$("$JAVA_HOME/bin/java" -version 2>&1 | head -1 | sed 's/.*"\(.*\)".*/\1/') em $JAVA_HOME"
+  [ -x "$JAVA_HOME/bin/javac" ] || aviso "javac" "ausente no JAVA_HOME (Ghidra precisa do JDK completo)"
+else
+  erro "JDK" "defina JAVA_HOME (recomendado JDK 21+)"
+fi
+
+# ---- Node ------------------------------------------------------------------
+if command -v node >/dev/null 2>&1; then
+  nodev="$(node --version)"
+  case "$nodev" in
+    v22.*|v24.*|v26.*|v3[0-9].*) ok "Node.js" "$nodev" ;;
+    *) aviso "Node.js" "$nodev (o REA requer 22.x, 24.x ou 26+)" ;;
+  esac
+else
+  erro "Node.js" "instale Node 22.x/24.x/26+"
+fi
+
+echo
+echo "Ferramentas de apoio"
+for t in rizin rz-bin objdump readelf strings file gdb binwalk tshark 7z unzip git python3 uv curl wget ps; do
+  p="$(command -v "$t" 2>/dev/null || true)"
+  if [ -n "$p" ]; then ok "$t" "$p"; else aviso "$t" "ausente (opcional)"; fi
+done
+for t in jadx apktool; do
+  p="$(command -v "$t" 2>/dev/null || true)"
+  if [ -n "$p" ]; then ok "$t" "$p"; else aviso "$t" "ausente (necessário para APKs/Android)"; fi
+done
+
+# ---- Registros MCP nos clientes de agente ----------------------------------
+echo
+echo "Registros MCP (clientes de agente)"
+# Arquivos de configuração comuns; a ausência é normal se o cliente não usa o arquivo.
+candidatos=(
+  "$HOME/.config/opencode/opencode.json"
+  "$HOME/.claude.json"
+  "$HOME/.codex/config.toml"
+  "$HOME/.gemini/settings.json"
+  "$HOME/.cursor/mcp.json"
+)
+achou=0
+for cfg in "${candidatos[@]}"; do
+  [ -f "$cfg" ] || continue
+  tem_rea="nao"; tem_decomp="nao"
+  grep -q '"rea"\|\[mcp_servers\.rea\]\|rea *=' "$cfg" 2>/dev/null && tem_rea="sim"
+  grep -q '"decomp"\|\[mcp_servers\.decomp\]\|decomp *=' "$cfg" 2>/dev/null && tem_decomp="sim"
+  [ "$tem_rea" = "nao" ] && [ "$tem_decomp" = "nao" ] && continue
+  achou=1
+  ok "$(basename "$cfg")" "rea=$tem_rea decomp=$tem_decomp ($cfg)"
+done
+sk_links="$(find "$HOME/.agents/skills" -maxdepth 1 -type l 2>/dev/null | wc -l)"
+if [ "$sk_links" -gt 0 ]; then
+  ok "skills (universal)" "$sk_links links em ~/.agents/skills"
+fi
+[ "$achou" = "0" ] && [ "$sk_links" = "0" ] && aviso "registros" "rode: rea setup  |  decomp connect  |  eng registrar"
+
+echo
+if [ "${1:-}" = "--deep" ] && [ -n "$rea_bin" ]; then
+  echo "REA doctor (profundo — pode demorar)"
+  rea doctor 2>&1 | head -60
+  echo
+fi
+
+echo "--------------------------------------------------"
+if [ "$falhas" -eq 0 ]; then
+  echo "Pronto. Falhas: 0 | Avisos: $avisos"
+  exit 0
+else
+  echo "Falhas: $falhas | Avisos: $avisos — corrija os itens [ERRO] acima."
+  exit 1
+fi
