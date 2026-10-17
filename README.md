@@ -23,7 +23,7 @@ alvo  ->  triagem  ->  análise (REA / Ghidra / decomp.wtf / rizin)
 
 ## Requisitos
 
-- Linux x86_64 (testado); macOS deve funcionar com ajustes
+- Linux x86_64 (testado); Windows via WSL2; macOS deve funcionar com ajustes
 - Node.js 22.x, 24.x ou 26+ e npm
 - JDK 21+ (o Ghidra 12.1 exige JDK 21)
 - Python 3, git, curl, tar, unzip
@@ -32,11 +32,22 @@ alvo  ->  triagem  ->  análise (REA / Ghidra / decomp.wtf / rizin)
 
 ## Instalação
 
+Repositório privado: autentique-se antes de clonar.
+
 ```bash
-git clone https://github.com/SanctusLocalHost/eng-reversa.git
+gh auth login
+gh repo clone SanctusLocalHost/eng-reversa
 cd eng-reversa
 ./install.sh
 ```
+
+Sem o `gh`, use `git clone https://github.com/SanctusLocalHost/eng-reversa.git`
+com um token de acesso pessoal ou uma chave SSH configurada.
+
+No **Windows**, use o WSL2. Há duas opções: rodar tudo dentro do Ubuntu do WSL
+(paridade total) ou usar o instalador PowerShell, que prepara o WSL, copia o
+toolkit, registra MCP/skills no cliente do Windows e cria o atalho `eng`.
+Passo a passo: `docs/WINDOWS.md`.
 
 O instalador é idempotente e faz, em ordem:
 
@@ -120,14 +131,17 @@ registro: `eng doctor`.
 
 ```
 eng-reversa/
-├── install.sh             instalador de restauração
-├── uninstall.sh           remove integrações do shell e links
+├── install.sh             instalador Linux/WSL
+├── uninstall.sh           remove integrações (Linux/WSL)
+├── install.ps1            instalador Windows (WSL2 + cliente nativo)
+├── uninstall.ps1          desinstalador Windows
+├── windows/               preparação do WSL, ponte MCP e atalhos eng
 ├── bin/                   CLI modular (eng + eng-*)
 ├── config/env.sh          ambiente central (raiz resolvida dinamicamente)
 ├── skills/                skills do agente (eng-reversa, eng-rea, eng-decomp)
 ├── agents/                perfil de agente
 ├── ghidra-scripts/        exportadores Java para Ghidra headless
-├── docs/                  arquitetura, fluxo, receitas e instalação
+├── docs/                  arquitetura, fluxo, receitas, instalação e Windows
 ├── tools/                 Ghidra dedicada (baixada; fora do git)
 ├── workspace/             um diretório por análise (fora do git)
 ├── targets/               artefatos originais, somente leitura (fora do git)
@@ -137,6 +151,7 @@ eng-reversa/
 ## Documentação
 
 - `docs/INSTALACAO.md` — instalação detalhada, atualização e solução de problemas
+- `docs/WINDOWS.md` — Windows: WSL2, instalador PowerShell, atalho e ponte MCP
 - `docs/ARQUITETURA.md` — layout, comandos e ambiente
 - `docs/FLUXO-DE-TRABALHO.md` — o ciclo completo, fase a fase
 - `docs/RECEITAS.md` — receitas por tipo de alvo (APK, Unity, Electron, ROM, .NET...)

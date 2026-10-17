@@ -4,10 +4,14 @@ Este documento cobre a instalação em uma máquina nova, a atualização e a
 solução de problemas. O caminho curto é:
 
 ```bash
-git clone https://github.com/SanctusLocalHost/eng-reversa.git
+gh auth login
+gh repo clone SanctusLocalHost/eng-reversa
 cd eng-reversa
 ./install.sh
 ```
+
+No **Windows**, use WSL2 e siga `docs/WINDOWS.md` (há um instalador PowerShell
+que prepara o WSL e registra tudo no cliente do Windows).
 
 O instalador trabalha **na própria pasta clonada**. Use `--home <dir>` para
 copiar o toolkit para outro lugar antes de instalar.
@@ -94,10 +98,20 @@ ls /tmp/teste-ghidra | head
 ## 5. Uso em outra máquina (restauração)
 
 1. Instale os pré-requisitos da seção 1.
-2. Clone o repositório e rode `./install.sh`.
+2. Clone o repositório privado (autentique-se antes) e rode `./install.sh`.
 3. Abra um terminal novo e reinicie o cliente de agente.
 4. Confirme com `eng doctor` e peça ao agente: "use a ENG. REVERSA para
    analisar <alvo>".
+
+No **Windows**, use WSL2 e siga `docs/WINDOWS.md`:
+
+```powershell
+# clone no Windows, depois:
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+O instalador PowerShell prepara o Ubuntu do WSL, copia o toolkit, roda o
+`install.sh` e registra MCP/skills no cliente do Windows.
 
 Os dados de trabalho (`workspace/`, `targets/`, `exports/` e `tools/`) não vão
 para o git: cada máquina baixa a Ghidra e cria seus próprios workspaces.

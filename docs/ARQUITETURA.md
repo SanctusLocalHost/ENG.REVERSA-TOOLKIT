@@ -7,6 +7,9 @@
 ├── README.md              guia rápido
 ├── install.sh             instalador de restauração (idempotente)
 ├── uninstall.sh           remove integrações
+├── install.ps1            instalador Windows (WSL2)
+├── uninstall.ps1          desinstalador Windows
+├── windows/               preparação do WSL, ponte MCP e atalhos eng
 ├── bin/                   CLI modular: `eng <comando>` (cada comando = 1 arquivo)
 ├── config/
 │   └── env.sh             ambiente central (carregado por todos os scripts)
@@ -97,3 +100,8 @@ O toolkit não depende de um cliente específico. O registro tem três partes:
 Depois de qualquer mudança de registro, **reinicie o cliente de agente**.
 `eng doctor` mostra quais configurações contêm `rea`/`decomp` e quantas skills
 estão linkadas.
+
+No **Windows**, o registro tem uma ponte adicional: `install.ps1` cria
+`mcp-rea.sh`/`mcp-decomp.sh` dentro do WSL e aponta os servidores MCP do
+cliente nativo para `wsl.exe`. O atalho `eng` encaminha comandos e converte
+caminhos `C:\...` em `/mnt/c/...`.

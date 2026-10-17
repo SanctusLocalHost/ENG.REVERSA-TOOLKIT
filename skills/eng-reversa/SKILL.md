@@ -18,7 +18,8 @@ source "<raiz-do-toolkit>/config/env.sh"
 
 `eng env` mostra a raiz resolvida e todas as variáveis. O instalador
 (`./install.sh`) já coloca `eng` no PATH e registra as skills no cliente de
-agente.
+agente. No Windows, o atalho `eng` (PowerShell) encaminha para o WSL e converte
+caminhos `C:\...` em `/mnt/c/...`.
 
 ## Fluxo obrigatório (siga nesta ordem)
 
